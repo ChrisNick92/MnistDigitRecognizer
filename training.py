@@ -3,12 +3,17 @@ from torch.optim import Adam
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from torch.optim.lr_scheduler import StepLR
+import os
 
 def training_loop(model, train_loader, val_loader, epochs,
                   lr, loss_fn, regularization=None,
                   reg_lambda=None, mod_epochs=20, early_stopping = False,
-                  patience = None, verbose = None, title = None):
+                  patience = None, verbose = None, title = None,
+                  scheduler_bool = False, gamma = 0.1, step_size = 10, model_name = "model"):
     optim = Adam(model.parameters(), lr=lr)
+    if scheduler_bool:
+        scheduler = StepLR(optim, step_size = step_size, gamma = gamma)
     if torch.cuda.is_available():
         device = "cuda"
     else:
@@ -21,7 +26,7 @@ def training_loop(model, train_loader, val_loader, epochs,
     counter_epochs = 0
 
     if early_stopping:
-        ear_stopping = EarlyStopping(patience= patience, verbose=verbose)
+        ear_stopping = EarlyStopping(patience= patience, verbose=verbose, path = model_name+".pt")
 
     for epoch in range(epochs):
         counter_epochs+=1
@@ -64,8 +69,10 @@ def training_loop(model, train_loader, val_loader, epochs,
             if ear_stopping.early_stop:
                 print("Early stopping")
                 break
+        if scheduler_bool:
+            scheduler.step()
     sns.set_style("dark")
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(range(1, counter_epochs + 1), train_loss_list, label='Train Loss')
     ax.plot(range(1, counter_epochs + 1), val_loss_list, label='Val Loss')
     ax.set_title("Train - Val Loss")
@@ -75,7 +82,7 @@ def training_loop(model, train_loader, val_loader, epochs,
     plt.show()
 
     if early_stopping:
-        model.load_state_dict(torch.load("checkpoint.pt"))
+        model.load_state_dict(torch.load(os.path.join("modelcheckpoints", model_name+".pt")))
 
 
 
@@ -93,7 +100,8 @@ def test_loop(model, test_dloader, device='cpu'):
             preds = model(X)
             predictions_list = np.concatenate((predictions_list,
                                                torch.argmax(preds, dim=-1).cpu().numpy()))
-    return predictions_list, targets_list
+    acc = len(targets_list[targets_list == predictions_list])/len(targets_list)
+    return predictions_list, targets_list, acc
 
 
 
@@ -133,7 +141,8 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter % 5 == 0: # Print only per 5 degradations of val loss
+                self.trace_func(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
@@ -145,5 +154,5 @@ class EarlyStopping:
         '''Saves model when validation loss decrease.'''
         if self.verbose:
             self.trace_func(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), self.path)
+        torch.save(model.state_dict(), os.path.join("modelcheckpoints", self.path))
         self.val_loss_min = val_loss

@@ -2,6 +2,7 @@ import enum
 from typing import OrderedDict
 import torch
 import torch.nn as nn
+import numpy as np
 from torch.utils.data import Dataset
 
 
@@ -42,4 +43,66 @@ class mlp_dataset(Dataset):
         return torch.tensor(self.X[idx,:], dtype=torch.float32), torch.tensor(self.y[idx], dtype=torch.int64)
 
                 
-                
+
+class conv_block(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size = 5, stride = 1, padding = 0, bias = True):
+        super(conv_block,self).__init__()
+        
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels = in_channels, out_channels =  out_channels,
+                      kernel_size = kernel_size, stride = stride,
+                      padding = padding, bias = bias),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU()
+            )
+        
+    def forward(self,x): 
+        return self.conv(x)
+
+class CNN(nn.Module):
+    def __init__(self,in_channels, out_channels):
+        super(CNN,self).__init__()
+        self.backbone = nn.Sequential(
+            conv_block(in_channels=in_channels,
+                       out_channels=6, bias = False),
+            nn.AdaptiveMaxPool2d(output_size = 12),
+            conv_block(in_channels = 6, out_channels = 16,
+                       bias = False),
+            nn.AdaptiveMaxPool2d(output_size = 4),
+            nn.Flatten()
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(in_features=4*4*16, out_features=256, bias=False),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Linear(in_features = 256, out_features = 128, bias = False),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(in_features = 128, out_features = 10)
+        )
+    
+    def forward(self,x):
+        x = self.backbone(x)
+        return self.classifier(x)
+    
+
+class cnn_dataset(Dataset):
+    def __init__(self,X,y, transforms = None):
+        self.X = np.expand_dims(X, axis = 0); self.y = y
+        self.transforms = transforms
+    def __len__(self):
+        return len(self.y)
+    
+    def __getitem__(self,idx):
+        if self.transforms is not None:
+            img = np.resize(self.X[:,idx,:], (28,28,1))
+            augmentations = self.transforms
+            features = augmentations(image = img)["image"]
+            features = torch.tensor(np.transpose(features, (2,0,1)), dtype=torch.float32)
+            labels = torch.tensor(self.y[idx], dtype = torch.int64)
+            return features, labels
+        else:
+            features = torch.tensor(self.X[:,idx,:], dtype = torch.float32).view(-1,28,28)
+            label = torch.tensor(self.y[idx], dtype = torch.int64)
+            return features, label
